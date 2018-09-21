@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Script.Config;
 using Microsoft.Azure.WebJobs.Script.WebHost.Properties;
@@ -21,6 +22,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         private readonly ILogger _logger;
         private readonly ISecretsRepository _repository;
         private HostSecretsInfo _hostSecrets;
+        private SemaphoreSlim _semaphoreSlim = new SemaphoreSlim(1, 1);
 
         // for testing
         public SecretManager()
@@ -65,14 +67,23 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         {
             if (_hostSecrets == null)
             {
-                HostSecrets hostSecrets = await LoadSecretsAsync<HostSecrets>();
-
-                if (hostSecrets == null)
+                HostSecrets hostSecrets;
+                await _semaphoreSlim.WaitAsync();
+                try
                 {
-                    // host secrets do not yet exist so generate them
-                    _logger.LogDebug(Resources.TraceHostSecretGeneration);
-                    hostSecrets = GenerateHostSecrets();
-                    await PersistSecretsAsync(hostSecrets);
+                    hostSecrets = await LoadSecretsAsync<HostSecrets>();
+
+                    if (hostSecrets == null)
+                    {
+                        // host secrets do not yet exist so generate them
+                        _logger.LogDebug(Resources.TraceHostSecretGeneration);
+                        hostSecrets = GenerateHostSecrets();
+                        await PersistSecretsAsync(hostSecrets);
+                    }
+                }
+                finally
+                {
+                    _semaphoreSlim.Release();
                 }
 
                 try
